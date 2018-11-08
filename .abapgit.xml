@@ -12,7 +12,6 @@
     <item>/package.json</item>
     <item>/.travis.yml</item>
     <item>/README_sequence_diagram.md</item>
-    <item>/package.devc.xml</item>
     <item>/seq_export_params.png</item>
     <item>/uml_export.png</item>
    </IGNORE>

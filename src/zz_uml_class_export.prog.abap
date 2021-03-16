@@ -117,7 +117,7 @@ TYPES: BEGIN OF ts_diagram_config,
          output_mode    TYPE char01,
          skip_dialog    TYPE flag,
          scale          TYPE tv_scale,
-         shadowing      TYPE flag,
+         svg            TYPE flag,
          display_source TYPE flag,
          hpages         TYPE sytabix,
          vpages         TYPE sytabix,
@@ -260,7 +260,8 @@ CLASS lcl_file_name DEFINITION FRIENDS lif_unit_test.
     CLASS-METHODS new IMPORTING iv_mode        TYPE char01
                       RETURNING VALUE(ro_file) TYPE REF TO lcl_file_name.
     METHODS constructor IMPORTING iv_mode TYPE char01.
-    METHODS dialog RETURNING VALUE(rv_user_action) TYPE i.
+    METHODS dialog IMPORTING iv_path               TYPE string
+                   RETURNING VALUE(rv_user_action) TYPE i.
     METHODS get_prefix RETURNING VALUE(rv_name) TYPE string
                        RAISING   cx_dynamic_check.
     METHODS get_fullpath RETURNING VALUE(rv_name) TYPE string.
@@ -287,6 +288,7 @@ CLASS lcl_file DEFINITION CREATE PRIVATE FRIENDS lif_unit_test.
 
     CLASS-METHODS download
       IMPORTING iv_data         TYPE xstring
+                iv_path         TYPE string
                 io_name         TYPE REF TO lcl_file_name
       RETURNING VALUE(rv_subrc) TYPE sysubrc.
 ENDCLASS.                    "lcl_file DEFINITION
@@ -326,13 +328,21 @@ CLASS lcl_plant_uml DEFINITION FRIENDS lif_unit_test.
                                     is_cfg         TYPE ts_diagram_config
                           RETURNING VALUE(rv_name) TYPE string.
 
+    METHODS svg_file_name IMPORTING io_name        TYPE REF TO lcl_file_name
+                                    is_cfg         TYPE ts_diagram_config
+                          RETURNING VALUE(rv_name) TYPE string.
+
     METHODS parameter_string IMPORTING io_name         TYPE REF TO lcl_file_name
                                        is_cfg          TYPE ts_diagram_config
+                                       iv_svg          TYPE abap_bool OPTIONAL
                              RETURNING VALUE(rv_param) TYPE string.
     METHODS show_html IMPORTING iv_html TYPE string
                                 iv_size TYPE string DEFAULT cl_abap_browser=>xlarge
                       RAISING   cx_dynamic_check.
     METHODS to_png IMPORTING io_name        TYPE REF TO lcl_file_name
+                             is_cfg         TYPE ts_diagram_config
+                   RETURNING VALUE(rv_name) TYPE string.
+    METHODS to_svg IMPORTING io_name        TYPE REF TO lcl_file_name
                              is_cfg         TYPE ts_diagram_config
                    RETURNING VALUE(rv_name) TYPE string.
 
@@ -405,7 +415,7 @@ CLASS lcl_configuration DEFINITION CREATE PRIVATE FRIENDS lif_unit_test.
              output_mode    TYPE char01,
              skip_dialog    TYPE flag,
              scale          TYPE perct,
-             shadowing      TYPE flag,
+             svg            TYPE flag,
              display_source TYPE flag,
              hpages         TYPE i,
              vpages         TYPE i,
@@ -539,7 +549,7 @@ CLASS lcl_file IMPLEMENTATION.
 
   METHOD download.
     rv_subrc = 1.
-    CHECK io_name->dialog( ) NE cl_gui_frontend_services=>action_cancel.
+    CHECK io_name->dialog( iv_path ) NE cl_gui_frontend_services=>action_cancel.
 
     rv_subrc = cl_uml_utilities=>save_xml_local( xml = iv_data
                                                  filename = io_name->get_fullpath( ) ).
@@ -592,6 +602,7 @@ CLASS lcl_file_name IMPLEMENTATION.
         window_title      = ms_file-title           " Window Title
         default_extension = ms_file-ext             " Default Extension
         file_filter       = ms_file-filter
+        initial_directory = iv_path
       CHANGING
         filename = ms_file-name          " File Name to Save
         path = lv_path                   " Path to File
@@ -643,14 +654,16 @@ CLASS lcl_plant_uml IMPLEMENTATION.
       WHEN lcl_configuration=>c_mode_exe.
         DATA(lo_name) = lcl_file_name=>new( lcl_file=>c_mode_txt ).
         IF lcl_file=>download( iv_data = to_xstring( mv_diagram )
+                               iv_path = is_cfg-local_path
                                io_name = lo_name ) IS INITIAL.
-          show_html( |<img src="{ to_png( io_name = lo_name
-                                          is_cfg = is_cfg ) }"/>\n{ source( is_cfg-display_source ) }| ).
+          show_html( |<img src="{ COND #( WHEN is_cfg-svg = abap_true THEN to_svg( io_name = lo_name is_cfg = is_cfg )
+                                                                      ELSE to_png( io_name = lo_name is_cfg = is_cfg ) ) }"/>\n{ source( is_cfg-display_source ) }| ).
         ENDIF.
 
       WHEN OTHERS.
 *       export data as PlantUML source
         lcl_file=>download( io_name = lcl_file_name=>new( is_cfg-output_mode )
+                            iv_path = is_cfg-local_path
                             iv_data = to_xstring( mv_diagram ) ).
     ENDCASE.
   ENDMETHOD.                    "output
@@ -677,12 +690,20 @@ CLASS lcl_plant_uml IMPLEMENTATION.
   ENDMETHOD.                    "to_xstring
 
   METHOD parameter_string.
-    rv_param = |-jar { is_cfg-java_jar } -o { is_cfg-local_path } "{ io_name->get_fullpath( ) }"|.
+    rv_param = |-jar { is_cfg-java_jar }{ COND #( WHEN iv_svg = abap_true THEN ' -tsvg' ELSE '' ) } -o { is_cfg-local_path } "{ io_name->get_fullpath( ) }"|.
   ENDMETHOD.
 
   METHOD png_file_name.
     TRY.
         rv_name = |{ is_cfg-local_path }{ io_name->get_prefix( ) }.png|.
+      CATCH cx_dynamic_check.
+        CLEAR rv_name.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD svg_file_name.
+    TRY.
+        rv_name = |{ is_cfg-local_path }{ io_name->get_prefix( ) }.svg|.
       CATCH cx_dynamic_check.
         CLEAR rv_name.
     ENDTRY.
@@ -701,6 +722,19 @@ CLASS lcl_plant_uml IMPLEMENTATION.
                              is_cfg = is_cfg ).
   ENDMETHOD.
 
+  METHOD to_svg.
+    CLEAR rv_name.
+    cl_gui_frontend_services=>execute(
+      EXPORTING application = is_cfg-java_appl
+                parameter = parameter_string( io_name = io_name
+                                              is_cfg = is_cfg
+                                              iv_svg = abap_true )
+                synchronous = 'X'
+      EXCEPTIONS OTHERS = 1 ).
+    CHECK sy-subrc EQ 0.
+    rv_name = svg_file_name( io_name = io_name
+                             is_cfg = is_cfg ).
+  ENDMETHOD.
 ENDCLASS.                    "lcl_plant_uml IMPLEMENTATION
 
 *----------------------------------------------------------------------*
@@ -740,7 +774,39 @@ CLASS lcl_uml_class IMPLEMENTATION.
     rv_flag = abap_false.
     lv_name = get_class( ).
     CHECK lv_name IS NOT INITIAL.
-    mo_uml->add( |{ lv_name } \{\n| ).
+
+    DATA(is_local) = xsdbool( ms_uml-container IS NOT INITIAL AND ms_uml-is_local EQ abap_true ).
+    DATA lv_obj_name TYPE trobj_name.
+    DATA lv_object TYPE trobjtype VALUE 'CLAS'.
+    DATA lv_url_tail TYPE string VALUE '/source/main'.
+    CONSTANTS lc_class_pool TYPE string VALUE `\CLASS-POOL=`.
+    CONSTANTS lc_prg_pool TYPE string VALUE `\PROGRAM=`.
+    CONSTANTS lc_function_pool TYPE string VALUE `\FUNCTION-POOL=`.
+    IF ms_uml-container IS NOT INITIAL AND ms_uml-is_local = abap_true.
+      IF find( val = ms_uml-container sub = lc_class_pool ) <> -1.
+        lv_obj_name = substring( val = ms_uml-container off = strlen( lc_class_pool ) ).
+        lv_url_tail = SWITCH #( substring( val = mv_name len = 4 ) WHEN 'LCL_' THEN '/includes/definitions' WHEN 'LTCL' THEN '/includes/testclasses' ELSE lv_url_tail ).
+      ELSE. " TODO local classes of FuGr and Programs
+        CLEAR lv_obj_name.
+      ENDIF.
+    ELSE.
+      IF find( val = ms_uml-name sub = '\INTERFACE=' ) <> -1.
+        lv_object = 'INTF'.
+      ELSEIF find( val = ms_uml-name sub = '\FUGR=' ) <> -1.
+        lv_object = 'FUGR'.
+      ENDIF.
+      lv_obj_name = mv_name.
+    ENDIF.
+
+    IF lv_obj_name IS NOT INITIAL.
+      TRY.
+          DATA(uri) = cl_adt_uri_mapper=>get_instance( )->if_adt_uri_mapper~map_wb_object_to_objref( cl_wb_object=>create_from_transport_key( p_object = lv_object p_obj_name = lv_obj_name ) )->get_http_url( ).
+        CATCH cx_adt_uri_mapping.
+          "handle exception
+      ENDTRY.
+    ENDIF.
+
+    mo_uml->add( |{ lv_name } { COND #( WHEN uri IS NOT INITIAL THEN | [[{ uri && lv_url_tail }]] | ELSE '' ) } \{\n| ).
     rv_flag = abap_true.
   ENDMETHOD.                    "begin_class
 
@@ -824,12 +890,24 @@ CLASS lcl_uml_class IMPLEMENTATION.
   ENDMETHOD.                    "visibility
 
   METHOD uml_add.
+    "CHECK find( val = iv_name sub = 'TABLEFRAME_' ) = -1.
+    "CHECK find( val = iv_name sub = 'TABLEPROC_' ) = -1.
     IF iv_abstract EQ abap_true.
       mo_uml->add( |\{abstract\}| ).
     ENDIF.
     visibility( iv_visibility ).
     IF iv_class EQ abap_true.
       mo_uml->add( |\{static\}| ).
+    ENDIF.
+    IF find( val = ms_uml-name sub = '\FUGR=' ) <> -1.
+      TRY.
+          DATA(lv_uri) = substring_before( val = iv_name sub = '( )' ) && '/source/main'.
+          lv_uri = cl_adt_uri_mapper=>get_instance( )->if_adt_uri_mapper~map_wb_object_to_objref( cl_wb_object=>create_from_transport_key(
+            p_object = 'FUGR' p_obj_name = CONV #( me->escape( mv_name ) ) )
+          )->get_http_url( ) && '/fmodules/' && lv_uri.
+        CATCH cx_adt_uri_mapping.
+          "handle exception
+      ENDTRY.
     ENDIF.
     mo_uml->add( |{ iv_name }\n| ).
   ENDMETHOD.                    "uml_add
@@ -972,6 +1050,7 @@ CLASS lcl_xmi_output IMPLEMENTATION.
     CHECK <lv_data> IS ASSIGNED.
 
     lcl_file=>download( iv_data = <lv_data>
+                        iv_path = ''
                         io_name = lcl_file_name=>new( lcl_file=>c_mode_xmi ) ).
     rv_flag = abap_true.
   ENDMETHOD.                    "lif_output~output
@@ -1022,11 +1101,11 @@ CLASS lcl_configuration IMPLEMENTATION.
                       local_path = `C:\Temp\Dokumente\UML\`                           " PlantUML jar file and output path
                       java_jar = `C:\Temp\Dokumente\UML\plantuml.jar`
                       server_url = `http://www.plantuml.com/plantuml/img/` ##NO_TEXT  " PlantUML server URL
-                      output_mode = c_mode_url
+                      output_mode = c_mode_exe
                       skip_dialog = space
                       scale = c_default_scale
-                      shadowing = abap_false
-                      display_source = abap_true
+                      svg = abap_true
+                      display_source = abap_false
                       hpages = 1
                       vpages = 1 ).
   ENDMETHOD.
@@ -1078,7 +1157,7 @@ CLASS lcl_configuration IMPLEMENTATION.
      ( ref = REF #( gs_cfg-local_path )     text = 'Local PlantUML path'(c26)     kind = 'S' )
      ( ref = REF #( gs_cfg-java_jar )       text = 'Local PlantUML jar file'(c27) kind = ' ' )
      ( ref = REF #( gs_cfg-java_appl )      text = 'Local Java path'(c28)         kind = 'S' ) " Select-Options
-     ( ref = REF #( gs_cfg-shadowing )      text = 'Shadowing '(c31)              kind = 'C' )
+     ( ref = REF #( gs_cfg-svg )            text = 'SVG '(c31)              kind = 'C' )
      ( ref = REF #( gs_cfg-display_source ) text = 'Display source '(c32)         kind = 'C' )    ).
   ENDMETHOD.
 

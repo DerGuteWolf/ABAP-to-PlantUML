@@ -221,7 +221,7 @@ CLASS lcl_uml_class DEFINITION FRIENDS lif_unit_test.
                      RETURNING VALUE(rv_name) TYPE string.
     METHODS get_container RETURNING VALUE(rv_name) TYPE string.
 
-    METHODS escape IMPORTING iv_name TYPE csequence RETURNING VALUE(rv_name) TYPE string.
+    METHODS escape_quotes IMPORTING iv_name TYPE csequence RETURNING VALUE(rv_name) TYPE string.
 
     DATA mo_uml TYPE REF TO lcl_uml.
     DATA ms_uml TYPE ts_uml.
@@ -742,7 +742,7 @@ ENDCLASS.                    "lcl_plant_uml IMPLEMENTATION
 *----------------------------------------------------------------------*
 CLASS lcl_uml_class IMPLEMENTATION.
 
-  METHOD escape.
+  METHOD escape_quotes.
     IF iv_name CA '/'.
       rv_name = |"{ iv_name }"|.
     ELSE.
@@ -800,13 +800,13 @@ CLASS lcl_uml_class IMPLEMENTATION.
 
     IF lv_obj_name IS NOT INITIAL.
       TRY.
-          DATA(uri) = cl_adt_uri_mapper=>get_instance( )->if_adt_uri_mapper~map_wb_object_to_objref( cl_wb_object=>create_from_transport_key( p_object = lv_object p_obj_name = lv_obj_name ) )->get_http_url( ).
+          DATA(lv_uri) = cl_adt_uri_mapper=>get_instance( )->if_adt_uri_mapper~map_wb_object_to_objref( cl_wb_object=>create_from_transport_key( p_object = lv_object p_obj_name = lv_obj_name ) )->get_http_url( ).
         CATCH cx_adt_uri_mapping.
           "handle exception
       ENDTRY.
     ENDIF.
 
-    mo_uml->add( |{ lv_name } { COND #( WHEN uri IS NOT INITIAL THEN | [[{ uri && lv_url_tail }]] | ELSE '' ) } \{\n| ).
+    mo_uml->add( |{ lv_name } { COND #( WHEN lv_uri IS NOT INITIAL THEN | [[{ lv_uri && lv_url_tail }]] | ELSE '' ) } \{\n| ).
     rv_flag = abap_true.
   ENDMETHOD.                    "begin_class
 
@@ -822,8 +822,10 @@ CLASS lcl_uml_class IMPLEMENTATION.
     end_class( ).
 
     IF ms_uml-supertype IS NOT INITIAL.
-      mo_uml->add( |{ escape( get_name( ms_uml-supertype ) ) } <\|-- { escape( mv_name ) }\n| ).
+      mo_uml->add( |{ escape_quotes( get_name( ms_uml-supertype ) ) } <\|-- { escape_quotes( mv_name ) }\n| ).
     ENDIF.
+
+    " TODO connection between local class and program/function group
 
     uml_reduce( it_data = ms_uml-t_implementations
                 iv_sep = '-->' ).
@@ -890,8 +892,6 @@ CLASS lcl_uml_class IMPLEMENTATION.
   ENDMETHOD.                    "visibility
 
   METHOD uml_add.
-    "CHECK find( val = iv_name sub = 'TABLEFRAME_' ) = -1.
-    "CHECK find( val = iv_name sub = 'TABLEPROC_' ) = -1.
     IF iv_abstract EQ abap_true.
       mo_uml->add( |\{abstract\}| ).
     ENDIF.
@@ -901,15 +901,15 @@ CLASS lcl_uml_class IMPLEMENTATION.
     ENDIF.
     IF find( val = ms_uml-name sub = '\FUGR=' ) <> -1.
       TRY.
-          DATA(lv_uri) = substring_before( val = iv_name sub = '( )' ) && '/source/main'.
+          DATA(lv_uri) = escape( val = substring_before( val = iv_name sub = '( )' ) format = cl_abap_format=>e_url_full ) && '/source/main'.
           lv_uri = cl_adt_uri_mapper=>get_instance( )->if_adt_uri_mapper~map_wb_object_to_objref( cl_wb_object=>create_from_transport_key(
-            p_object = 'FUGR' p_obj_name = CONV #( me->escape( mv_name ) ) )
+            p_object = 'FUGR' p_obj_name = CONV #( mv_name ) )
           )->get_http_url( ) && '/fmodules/' && lv_uri.
         CATCH cx_adt_uri_mapping.
           "handle exception
       ENDTRY.
     ENDIF.
-    mo_uml->add( |{ iv_name }\n| ).
+    mo_uml->add( |{ iv_name } { COND #( WHEN lv_uri IS NOT INITIAL THEN | [[[{ lv_uri }]]]| ELSE '' ) }\n| ).
   ENDMETHOD.                    "uml_add
 
   METHOD uml_reduce.
@@ -919,9 +919,9 @@ CLASS lcl_uml_class IMPLEMENTATION.
     CHECK iv_active EQ abap_true.
     LOOP AT it_data ASSIGNING <lv_line>.
       AT FIRST.
-        lv_prefix = escape( mv_name ) && ` ` && iv_sep.
+        lv_prefix = escape_quotes( mv_name ) && ` ` && iv_sep.
       ENDAT.
-      mo_uml->add( |{ lv_prefix } { escape( get_name( <lv_line> ) ) }{ iv_suffix }\n| ).
+      mo_uml->add( |{ lv_prefix } { escape_quotes( get_name( <lv_line> ) ) }{ iv_suffix }\n| ).
     ENDLOOP.
   ENDMETHOD.                    "uml_reduce
 

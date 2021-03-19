@@ -219,6 +219,9 @@ CLASS lcl_uml_class DEFINITION FRIENDS lif_unit_test.
 
     METHODS get_name IMPORTING iv_name        TYPE csequence
                      RETURNING VALUE(rv_name) TYPE string.
+    METHODS get_name_in_container IMPORTING iv_name        TYPE csequence
+                                            iv_container   TYPE csequence
+                                  RETURNING VALUE(rv_name) TYPE string.
     METHODS get_container RETURNING VALUE(rv_name) TYPE string.
 
     METHODS escape_quotes IMPORTING iv_name TYPE csequence RETURNING VALUE(rv_name) TYPE string.
@@ -775,6 +778,7 @@ CLASS lcl_uml_class IMPLEMENTATION.
     lv_name = get_class( ).
     CHECK lv_name IS NOT INITIAL.
 
+    " Add Links https://plantuml.com/link
     DATA(is_local) = xsdbool( ms_uml-container IS NOT INITIAL AND ms_uml-is_local EQ abap_true ).
     DATA lv_obj_name TYPE trobj_name.
     DATA lv_object TYPE trobjtype VALUE 'CLAS'.
@@ -786,7 +790,7 @@ CLASS lcl_uml_class IMPLEMENTATION.
       IF find( val = ms_uml-container sub = lc_class_pool ) <> -1.
         lv_obj_name = substring( val = ms_uml-container off = strlen( lc_class_pool ) ).
         lv_url_tail = SWITCH #( substring( val = mv_name len = 4 ) WHEN 'LCL_' THEN '/includes/definitions' WHEN 'LTCL' THEN '/includes/testclasses' ELSE lv_url_tail ).
-      ELSE. " TODO local classes of FuGr and Programs
+      ELSE. " currently no links for local classes of FuGr and Programs possible
         CLEAR lv_obj_name.
       ENDIF.
     ELSE.
@@ -794,6 +798,8 @@ CLASS lcl_uml_class IMPLEMENTATION.
         lv_object = 'INTF'.
       ELSEIF find( val = ms_uml-name sub = '\FUGR=' ) <> -1.
         lv_object = 'FUGR'.
+      ELSEIF find( val = ms_uml-name sub = '\PROGRAM=' ) <> -1.
+        lv_object = 'PROG'.
       ENDIF.
       lv_obj_name = mv_name.
     ENDIF.
@@ -825,7 +831,11 @@ CLASS lcl_uml_class IMPLEMENTATION.
       mo_uml->add( |{ escape_quotes( get_name( ms_uml-supertype ) ) } <\|-- { escape_quotes( mv_name ) }\n| ).
     ENDIF.
 
-    " TODO connection between local class and program/function group
+    " connection between local class and (--*) program/function group
+    DATA(lv_container) = get_container( ).
+    IF lv_container IS NOT INITIAL AND lv_container <> mv_name.
+      mo_uml->add( |{ escape_quotes( lv_container ) } *-- { escape_quotes( get_name_in_container( iv_name = mv_name iv_container = lv_container ) ) }\n| ).
+    ENDIF.
 
     uml_reduce( it_data = ms_uml-t_implementations
                 iv_sep = '-->' ).
@@ -845,7 +855,13 @@ CLASS lcl_uml_class IMPLEMENTATION.
     rv_name = substring_after( val = iv_name regex = '\\(CLASS|INTERFACE)=' ).
     CHECK rv_name IS INITIAL.
     rv_name = substring_after( val = iv_name regex = '\\FUGR=' ).
+    CHECK rv_name IS INITIAL.
+    rv_name = substring_after( val = iv_name regex = '\\PROGRAM=' ).
   ENDMETHOD.                    "get_name
+
+  METHOD get_name_in_container.
+    rv_name = iv_name && COND #( WHEN iv_container IS NOT INITIAL AND iv_name <> iv_container THEN '_' && iv_container ELSE '' ).
+  ENDMETHOD.
 
   METHOD get_container.
     rv_name = substring_after( val = ms_uml-container regex = '\\(CLASS-POOL|PROGRAM|FUNCTION-POOL)=' ).
@@ -858,6 +874,10 @@ CLASS lcl_uml_class IMPLEMENTATION.
       IF ms_scan_cfg-scan_function_groups EQ abap_true.
         rv_class = |class { mv_name } << (F,#FF7700) FuGr >>|.
       ENDIF.
+    ELSEIF find( val = ms_uml-name sub = '\PROGRAM=' ) GE 0 AND ( ms_uml-container IS INITIAL OR ms_uml-name = ms_uml-container ).
+      IF ms_scan_cfg-scan_programs EQ abap_true.
+        rv_class = |class { mv_name } << (P,#FF7700) Prg >>|. " TODO Other color
+      ENDIF.
     ELSE.
       IF find( val = ms_uml-name sub = '\INTERFACE=' ) GE 0.
         lv_prefix = |interface|.
@@ -868,7 +888,7 @@ CLASS lcl_uml_class IMPLEMENTATION.
       ENDIF.
       rv_class = |{ lv_prefix } { mv_name }|.
       IF ms_uml-container IS NOT INITIAL AND ms_uml-is_local EQ abap_true.
-        rv_class = |{ lv_prefix } "{ mv_name }\\n({ get_container( ) })" as { mv_name }|.
+        rv_class = |{ lv_prefix } "{ mv_name }\\n({ get_container( ) })" as { get_name_in_container( iv_name = mv_name iv_container = get_container( ) ) }|.
       ENDIF.
     ENDIF.
   ENDMETHOD.                    "get_class
@@ -899,6 +919,8 @@ CLASS lcl_uml_class IMPLEMENTATION.
     IF iv_class EQ abap_true.
       mo_uml->add( |\{static\}| ).
     ENDIF.
+
+    " Add Links cf https://plantuml.com/link
     IF find( val = ms_uml-name sub = '\FUGR=' ) <> -1.
       TRY.
           DATA(lv_uri) = escape( val = substring_before( val = iv_name sub = '( )' ) format = cl_abap_format=>e_url_full ) && '/source/main'.
@@ -919,7 +941,7 @@ CLASS lcl_uml_class IMPLEMENTATION.
     CHECK iv_active EQ abap_true.
     LOOP AT it_data ASSIGNING <lv_line>.
       AT FIRST.
-        lv_prefix = escape_quotes( mv_name ) && ` ` && iv_sep.
+        lv_prefix = escape_quotes( get_name_in_container( iv_name = mv_name iv_container = get_container( ) ) ) && ` ` && iv_sep.
       ENDAT.
       mo_uml->add( |{ lv_prefix } { escape_quotes( get_name( <lv_line> ) ) }{ iv_suffix }\n| ).
     ENDLOOP.
